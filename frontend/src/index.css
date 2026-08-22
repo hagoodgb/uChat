@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: radial-gradient(1200px 800px at 80% -10%, rgba(201, 161, 90, 0.06), transparent),
+    #14161C;
+  color: #E8E6E0;
+  font-family: "Source Serif 4", "Newsreader", serif;
+}
+
+::selection {
+  background: rgba(201, 161, 90, 0.35);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2A2E3A; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3f4e; }
+
+/* ---- In-chat formatting: SillyTavern-style asterisk/quote emphasis ---- */
+.msg-action {
+  color: #8983A0;
+  font-style: italic;
+}
+.msg-speech {
+  color: #F2D9A8;
+}
+
+/* ---- Signature element: mixing-board fader sliders for every setting ---- */
+.fader-track {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: #2A2E3A;
+}
+.fader-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #8C7343, #C9A15A);
+}
+.fader-thumb {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(180deg, #E8E6E0, #b9b6ae);
+  border-radius: 3px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(0,0,0,0.15);
+  cursor: grab;
+}
+.fader-thumb:active {
+  cursor: grabbing;
+}
+.fader-thumb::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 1px;
+  background: #14161C;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 1.4s ease-in-out infinite;
+}

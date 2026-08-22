@@ -1,0 +1,3 @@
+source /usr/share/nvm/init-nvm.sh
+nvm install 22 (if not already installed)
+nvm use 22
