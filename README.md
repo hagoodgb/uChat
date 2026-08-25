@@ -14,14 +14,49 @@ persona, and run solo or group roleplay chats with per-character models.
 
 ## Setup
 
-Requires Node.js 18+.
+Requires Node.js 18+. There are two ways to run this — pick based on what
+you're doing.
+
+### Recommended: single-server mode (use this for real usage, especially LAN)
+
+One process, one port, no dev proxy in the picture. This is what you want
+for actually using the app day-to-day, and it's **required** for accessing
+it from a different machine on your network — more on why below.
+
+```bash
+# 1. Build the frontend
+cd frontend
+npm install
+npm run build
+
+# 2. Run the backend — it serves the built frontend itself
+cd ../backend
+npm install
+cp .env.example .env
+# generate an encryption key and paste it into .env as ENCRYPTION_KEY:
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+npm start
+```
+
+Open **http://localhost:8787** — that's it, one URL, one server. To reach
+it from another device on your LAN, use this machine's LAN IP instead of
+`localhost` (e.g. `http://192.168.1.50:8787`) — no extra flags needed, it
+already listens on all network interfaces by default.
+
+If you change any frontend code later, re-run `npm run build` in
+`frontend/` and restart the backend to pick up the new build.
+
+### Development mode (two servers, hot-reload, localhost only)
+
+Faster to iterate on the frontend (instant reload on save), but **only
+reliable when you're on the same machine the servers are running on** —
+see the note below for why.
 
 ```bash
 # 1. Backend
 cd backend
 npm install
 cp .env.example .env
-# generate an encryption key and paste it into .env as ENCRYPTION_KEY:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 npm run dev        # http://localhost:8787
 
@@ -31,8 +66,16 @@ npm install
 npm run dev         # http://localhost:5173
 ```
 
-Open http://localhost:5173. The frontend proxies `/api` to the backend, so
-both need to be running.
+Open http://localhost:5173. The frontend dev server proxies `/api` to the
+backend, so both need to be running.
+
+**Why dev mode breaks across a LAN:** Vite's dev proxy is built for
+ordinary request/response calls, not the long-lived streaming connection
+used while a model is generating a reply. On the same machine, that hop is
+instant (loopback); over real WiFi/Ethernet to another device, the extra
+latency is enough for the backend to think the connection dropped and
+cancel the generation before it can finish. Single-server mode removes the
+proxy from the picture entirely, so this doesn't come up.
 
 ## Using it
 
@@ -98,3 +141,8 @@ both need to be running.
   same convention SillyTavern/TavernAI use, so cards are portable both ways.
 - This is a local, single-user tool by design — there's no auth layer, so
   don't expose the backend port to the open internet as-is.
+- In single-server mode the app lives at port **8787**, not 5173 — update
+  any bookmarks/shortcuts if you were previously using dev mode.
+- `frontend/dist/` (the build output) and `backend/data/` (the SQLite
+  database and avatars) are both generated locally and shouldn't be
+  committed if you put this under version control.
