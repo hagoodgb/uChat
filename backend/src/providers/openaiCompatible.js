@@ -33,10 +33,21 @@ export async function listModels(profile, apiKey) {
   if (!res.ok) throw new Error(`Failed to list models: HTTP ${res.status}`);
   const data = await res.json();
   const list = Array.isArray(data?.data) ? data.data : [];
-  return list
+  const models = list
     .map((m) => m.id)
     .filter(Boolean)
     .sort();
+  // Providers that expose a context window per model (OpenRouter's
+  // `context_length` is the common one) let the Settings menu default the
+  // Context Limit slider to the actual max for whichever model is active,
+  // rather than a guessed fallback.
+  const contextLengths = {};
+  for (const m of list) {
+    if (!m.id) continue;
+    const len = m.context_length ?? m.context_window ?? m.max_context_length ?? null;
+    if (typeof len === "number" && len > 0) contextLengths[m.id] = len;
+  }
+  return { models, contextLengths };
 }
 
 // messages: [{ role: 'system'|'user'|'assistant', content: string }]

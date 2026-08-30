@@ -9,6 +9,29 @@
 
 const approxTokens = (text) => Math.ceil((text || "").length / 4);
 
+// Trims a fully-assembled messages array down to a token budget by dropping
+// the OLDEST non-system messages first — never the system prompt(s), and
+// never the very last message (the model needs something to actually
+// respond to, even if the budget is set unrealistically low). This is the
+// Context Limit setting's job: cap the total request size, independent of
+// how long a conversation has grown, so cost/latency stay predictable.
+// Same approx-tokens-per-character heuristic already used for lorebook
+// budgeting elsewhere in this file — no real tokenizer, but consistent and
+// good enough to size a Settings slider against.
+export function trimToContextLimit(messages, limitTokens) {
+  if (!limitTokens || limitTokens <= 0) return messages; // no limit configured
+  const totalTokens = (msgs) => msgs.reduce((sum, m) => sum + approxTokens(m.content), 0);
+  if (totalTokens(messages) <= limitTokens) return messages;
+
+  const result = [...messages];
+  while (totalTokens(result) > limitTokens) {
+    const idx = result.findIndex((m, i) => m.role !== "system" && i !== result.length - 1);
+    if (idx === -1) break; // only system messages and/or the final turn remain — stop
+    result.splice(idx, 1);
+  }
+  return result;
+}
+
 // {{user}} -> the active persona's name (or "User" if none is set)
 // {{char}} -> the character's own name
 // Applied to card fields at prompt-build time (never baked permanently into

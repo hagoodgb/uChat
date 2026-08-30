@@ -9,6 +9,7 @@ import {
   computeStopSequences,
   reshapeHistoryForCharacter,
   replaceMacros,
+  trimToContextLimit,
 } from "../lib/promptBuilder.js";
 
 export const router = Router();
@@ -36,6 +37,14 @@ function loadAttachedLorebooks(characterId) {
   return rows.map((r) => JSON.parse(r.book_json));
 }
 
+function loadChatLorebooks(chatId) {
+  if (!chatId) return [];
+  const rows = db
+    .prepare(`SELECT l.* FROM lorebooks l JOIN chat_lorebooks cl ON cl.lorebook_id = l.id WHERE cl.chat_id = ?`)
+    .all(chatId);
+  return rows.map((r) => JSON.parse(r.book_json));
+}
+
 // Loads raw chat history (with speaker names + message ids) so per-character
 // reshaping can label "other speaker" turns, and continue/reroll can locate
 // a specific message within it.
@@ -59,15 +68,16 @@ function loadHistoryWithSpeakers(chatId) {
   }));
 }
 
-// Pulls the two global prompt fields out of the generic settings object
-// (they travel alongside temperature/top_p/etc from the Settings menu but
-// aren't provider params) for prompt assembly. What's left goes through the
-// normal per-protocol settings filter untouched.
+// Pulls the two global prompt fields (and the context limit) out of the
+// generic settings object (they travel alongside temperature/top_p/etc from
+// the Settings menu but aren't provider params) for prompt assembly. What's
+// left goes through the normal per-protocol settings filter untouched.
 function extractGlobalPrompt(settings = {}) {
-  const { systemPrompt, postHistoryInstructions, ...rest } = settings;
+  const { systemPrompt, postHistoryInstructions, contextLimit, ...rest } = settings;
   return {
     globalSystemPrompt: systemPrompt || "",
     globalPostHistoryInstructions: postHistoryInstructions || "",
+    contextLimit: typeof contextLimit === "number" ? contextLimit : 0,
     rest,
   };
 }
@@ -168,8 +178,8 @@ router.post("/completion", async (req, res) => {
   let full = "";
 
   try {
-    const { globalSystemPrompt, globalPostHistoryInstructions, rest } = extractGlobalPrompt(settings);
-    const finalMessages = [...messages];
+    const { globalSystemPrompt, globalPostHistoryInstructions, contextLimit, rest } = extractGlobalPrompt(settings);
+    let finalMessages = [...messages];
     // Continuing must end in the assistant's own partial turn so the
     // provider treats it as an extension, not a fresh instruction — so skip
     // injecting fresh prompt scaffolding in that case.
@@ -177,6 +187,7 @@ router.post("/completion", async (req, res) => {
       if (globalSystemPrompt) finalMessages.unshift({ role: "system", content: globalSystemPrompt });
       if (globalPostHistoryInstructions) finalMessages.push({ role: "system", content: globalPostHistoryInstructions });
     }
+    finalMessages = trimToContextLimit(finalMessages, contextLimit);
 
     const apiKey = row.api_key_encrypted ? decryptSecret(row.api_key_encrypted) : null;
     const profile = buildProfile(row, apiKey);
@@ -275,10 +286,13 @@ router.post("/character-completion", async (req, res) => {
       : [];
 
     const recentText = history.slice(-6).map((m) => m.content).join("\n") + "\n" + (scenarioOverride || "");
-    const books = loadAttachedLorebooks(characterId);
+    // Character-attached lorebooks plus anything attached directly to the
+    // chat itself — both contribute, regardless of which character is
+    // replying, so a chat-level lorebook applies uniformly across a group.
+    const books = [...loadAttachedLorebooks(characterId), ...loadChatLorebooks(chatId)];
     const lorebookEntries = books.flatMap((b) => scanLorebook(b, recentText));
 
-    const { globalSystemPrompt, globalPostHistoryInstructions, rest } = extractGlobalPrompt(settings);
+    const { globalSystemPrompt, globalPostHistoryInstructions, contextLimit, rest } = extractGlobalPrompt(settings);
     const { systemPrompt, postHistoryMessage } = buildCharacterPrompt({
       character,
       scenarioOverride,
@@ -291,7 +305,7 @@ router.post("/character-completion", async (req, res) => {
     });
 
     const reshaped = reshapeHistoryForCharacter(history, character, persona?.name);
-    const finalMessages = [{ role: "system", content: systemPrompt }, ...reshaped];
+    let finalMessages = [{ role: "system", content: systemPrompt }, ...reshaped];
 
     if (!continueMessageId) {
       // Same reasoning as /completion: continuation must end in the
@@ -304,6 +318,7 @@ router.post("/character-completion", async (req, res) => {
         });
       }
     }
+    finalMessages = trimToContextLimit(finalMessages, contextLimit);
 
     const stopSequences = computeStopSequences({ personaName: persona?.name, otherCharacterNames });
 

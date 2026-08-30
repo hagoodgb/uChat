@@ -2,15 +2,18 @@ import { useEffect, useState } from "react";
 import { Save, Trash2 } from "lucide-react";
 import Overlay from "../Overlay.jsx";
 import Slider from "../Slider.jsx";
-import { useStore } from "../../store/useStore.js";
+import { useStore, DEFAULT_CONTEXT_LIMIT } from "../../store/useStore.js";
 import { api } from "../../lib/api.js";
 
 export default function SettingsOverlay() {
   const closeOverlay = useStore((s) => s.closeOverlay);
   const activeConnectionId = useStore((s) => s.activeConnectionId);
+  const activeModel = useStore((s) => s.activeModel);
+  const modelContextLengths = useStore((s) => s.modelContextLengths);
   const settingsSchema = useStore((s) => s.settingsSchema);
   const settingsValues = useStore((s) => s.settingsValues);
   const setSettingValue = useStore((s) => s.setSettingValue);
+  const setContextLimitForModel = useStore((s) => s.setContextLimitForModel);
   const settingsProfiles = useStore((s) => s.settingsProfiles);
   const setSettingsProfiles = useStore((s) => s.setSettingsProfiles);
   const applySettingsProfile = useStore((s) => s.applySettingsProfile);
@@ -32,6 +35,13 @@ export default function SettingsOverlay() {
     await api.deleteSettingsProfile(id);
     api.listSettingsProfiles().then(setSettingsProfiles);
   };
+
+  // Defaults to the model's actual max context window when the provider
+  // exposes one (OpenRouter does; OpenAI/Anthropic generally don't), else a
+  // safe fallback — but the slider's own ceiling stays generous regardless,
+  // so raising it past a guessed/outdated max is never blocked.
+  const detectedMax = modelContextLengths[activeModel] || DEFAULT_CONTEXT_LIMIT;
+  const contextLimitMax = Math.max(detectedMax, 200000, settingsValues.contextLimit || 0);
 
   return (
     <Overlay
@@ -66,6 +76,21 @@ export default function SettingsOverlay() {
             rows={3}
             placeholder="e.g. Keep replies under 4 sentences. Never speak for the user."
             className="w-full resize-y rounded-md border border-hairline bg-panel px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brass"
+          />
+        </div>
+        <div>
+          <Slider
+            label="Context Limit"
+            description={
+              modelContextLengths[activeModel]
+                ? `Caps how much chat history gets sent per request. Defaults to ${activeModel}'s real max (${detectedMax.toLocaleString()} tokens) the first time it's used — lower it to control token usage/cost.`
+                : "Caps how much chat history gets sent per request — lower it to control token usage/cost. This provider doesn't report a model max, so this starts at a safe generic default."
+            }
+            min={512}
+            max={contextLimitMax}
+            step={256}
+            value={settingsValues.contextLimit || DEFAULT_CONTEXT_LIMIT}
+            onChange={(v) => setContextLimitForModel(activeModel, v)}
           />
         </div>
       </div>

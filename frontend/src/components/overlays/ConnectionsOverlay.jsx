@@ -25,6 +25,8 @@ export default function ConnectionsOverlay() {
   const setActiveConnection = useStore((s) => s.setActiveConnection);
   const setAvailableModels = useStore((s) => s.setAvailableModels);
   const setActiveModel = useStore((s) => s.setActiveModel);
+  const setModelContextLengths = useStore((s) => s.setModelContextLengths);
+  const applyContextLimitForModel = useStore((s) => s.applyContextLimitForModel);
   const availableModels = useStore((s) => s.availableModels);
   const activeModel = useStore((s) => s.activeModel);
   const setSettingsSchema = useStore((s) => s.setSettingsSchema);
@@ -80,6 +82,7 @@ export default function ConnectionsOverlay() {
       if (!result.ok) throw new Error(result.message || "Connection failed");
       setActiveConnection(conn.id, result.protocol);
       setAvailableModels(result.models);
+      setModelContextLengths(result.contextLengths);
       // Prefer whichever model was last used on this connection, if it's
       // still in the live model list, rather than always defaulting to the
       // first one alphabetically.
@@ -88,6 +91,7 @@ export default function ConnectionsOverlay() {
           ? result.lastConnectedModel
           : result.models[0] || null;
       setActiveModel(preferred);
+      applyContextLimitForModel(preferred);
       const schemaRes = await api.getSettingsSchema(conn.id);
       setSettingsSchema(schemaRes.schema);
       setStatus((s) => ({ ...s, [conn.id]: { state: "ok", message: `${result.models.length} models loaded` } }));
@@ -100,6 +104,7 @@ export default function ConnectionsOverlay() {
 
   const changeActiveModel = async (connId, model) => {
     setActiveModel(model);
+    applyContextLimitForModel(model);
     try {
       await api.updateConnection(connId, { lastConnectedModel: model });
     } catch {

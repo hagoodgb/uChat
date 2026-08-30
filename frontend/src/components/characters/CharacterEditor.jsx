@@ -6,7 +6,6 @@ import { api } from "../../lib/api.js";
 const blankForm = {
   name: "",
   description: "",
-  personality: "",
   scenario: "",
   firstMes: "",
   alternateGreetings: [],
@@ -45,10 +44,15 @@ export default function CharacterEditor({ character, onClose, onSaved }) {
   useEffect(() => {
     api.listLorebooks().then(setLorebooks).catch(console.error);
     if (character) {
+      // Description and Personality used to be separate fields (and still
+      // are on imported SillyTavern-format cards) — merged here into one
+      // box for editing so nothing from either gets lost. Saving writes
+      // the combined text back to `description` and clears `personality`,
+      // so the split doesn't linger once a character's been edited here.
+      const combinedDescription = [character.description, character.personality].filter(Boolean).join("\n\n");
       setForm({
         name: character.name || "",
-        description: character.description || "",
-        personality: character.personality || "",
+        description: combinedDescription,
         scenario: character.scenario || "",
         firstMes: character.firstMes || "",
         alternateGreetings: character.alternateGreetings || [],
@@ -91,7 +95,7 @@ export default function CharacterEditor({ character, onClose, onSaved }) {
       const payload = {
         name: form.name.trim(),
         description: form.description,
-        personality: form.personality,
+        personality: "", // consolidated into description above — see load logic
         scenario: form.scenario,
         firstMes: form.firstMes,
         alternateGreetings: form.alternateGreetings.filter((g) => g.trim()),
@@ -186,14 +190,9 @@ export default function CharacterEditor({ character, onClose, onSaved }) {
         </div>
       </div>
 
-      <div className="mt-2 grid grid-cols-1 gap-x-4 md:grid-cols-2">
-        <Field label="Description" hint="Appearance, background, defining traits">
-          <textarea value={form.description} onChange={set("description")} rows={4} className={textareaCls} />
-        </Field>
-        <Field label="Personality" hint="Voice, temperament, quirks">
-          <textarea value={form.personality} onChange={set("personality")} rows={4} className={textareaCls} />
-        </Field>
-      </div>
+      <Field label="Description" hint="Appearance, background, personality, voice, quirks — everything about who they are">
+        <textarea value={form.description} onChange={set("description")} rows={6} className={textareaCls} />
+      </Field>
 
       <Field label="Scenario" hint="Default setting/premise — overridden per-chat by the scenario editor">
         <textarea value={form.scenario} onChange={set("scenario")} rows={2} className={textareaCls} />
@@ -252,7 +251,7 @@ export default function CharacterEditor({ character, onClose, onSaved }) {
       <div className="mt-2 border-t border-hairline pt-4">
         <h3 className="mb-2 text-sm font-medium text-ink">Attached lorebooks</h3>
         {lorebooks.length === 0 ? (
-          <p className="text-xs text-muted">No lorebooks yet — create one from the Characters menu.</p>
+          <p className="text-xs text-muted">No lorebooks yet — create one from the Lorebooks menu at the top.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {lorebooks.map((lb) => (

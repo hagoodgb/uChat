@@ -60,6 +60,16 @@ if (frontendBuilt) {
   );
 }
 
+// Catch-all error handler: return JSON instead of Express's default HTML
+// stack-trace page, so error messages stay short and readable wherever
+// they surface on the frontend (e.g. as a "⚠ ..." message in chat) rather
+// than dumping a full server stack trace into the UI.
+app.use((err, req, res, next) => {
+  console.error(err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: err.message || "Internal server error" });
+});
+
 const PORT = process.env.PORT || 8787;
 app.listen(PORT, () => {
   console.log(`LLM Chat Studio backend listening on http://localhost:${PORT}`);

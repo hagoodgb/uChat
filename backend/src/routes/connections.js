@@ -106,8 +106,14 @@ router.post("/:id/connect", async (req, res) => {
     const apiKey = row.api_key_encrypted ? decryptSecret(row.api_key_encrypted) : null;
     const profile = buildProfile(row, apiKey);
     const adapter = getAdapter(profile.protocol);
-    const models = await adapter.listModels(profile, apiKey);
-    res.json({ ok: true, protocol: profile.protocol, models, lastConnectedModel: row.last_connected_model });
+    const { models, contextLengths } = await adapter.listModels(profile, apiKey);
+    res.json({
+      ok: true,
+      protocol: profile.protocol,
+      models,
+      contextLengths,
+      lastConnectedModel: row.last_connected_model,
+    });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
   }
@@ -120,8 +126,8 @@ router.get("/:id/models", async (req, res) => {
     const apiKey = row.api_key_encrypted ? decryptSecret(row.api_key_encrypted) : null;
     const profile = buildProfile(row, apiKey);
     const adapter = getAdapter(profile.protocol);
-    const models = await adapter.listModels(profile, apiKey);
-    res.json({ models });
+    const { models, contextLengths } = await adapter.listModels(profile, apiKey);
+    res.json({ models, contextLengths });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

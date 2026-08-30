@@ -54,6 +54,7 @@ export default function HistoryOverlay() {
         role: m.role,
         content: m.content,
         characterId: m.characterId,
+        personaId: m.personaId,
         variantIndex: m.variantIndex,
         variantCount: m.variantCount,
       }))
@@ -138,11 +139,14 @@ export default function HistoryOverlay() {
                           className="flex-1 rounded border border-brass bg-panel px-1.5 py-0.5 text-sm text-ink outline-none"
                         />
                       ) : (
-                        <button
-                          onClick={() => loadChat(chat)}
-                          className="flex-1 truncate text-left text-sm text-ink hover:text-brass"
-                        >
-                          {chat.title}
+                        <button onClick={() => loadChat(chat)} className="group min-w-0 flex-1 text-left">
+                          <div className="truncate text-sm text-ink group-hover:text-brass">{chat.title}</div>
+                          {chat.lastMessagePreview && (
+                            <div className="truncate text-xs text-muted">
+                              {chat.lastMessageRole === "user" ? "You: " : ""}
+                              {chat.lastMessagePreview}
+                            </div>
+                          )}
                         </button>
                       )}
                       <span className="shrink-0 font-mono text-[11px] text-muted">{timeAgo(chat.updatedAt)}</span>

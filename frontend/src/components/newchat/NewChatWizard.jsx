@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Sparkles, PenLine, Wand2 } from "lucide-react";
+import { Sparkles, PenLine, Wand2, BookOpen } from "lucide-react";
 import Overlay from "../Overlay.jsx";
 import { useStore } from "../../store/useStore.js";
 import { api, streamCharacterCompletion, streamCompletion } from "../../lib/api.js";
 import { replaceMacros } from "../../lib/macros.js";
+import { generateId } from "../../lib/id.js";
 
 // Launched either with a specific character (start-chat-with-card) or with
 // character=null (blank chat). Handles the scenario override + greeting
@@ -31,17 +32,22 @@ export default function NewChatWizard({ character, onClose }) {
   const settingsValues = useStore((s) => s.settingsValues);
   const activePersonaId = useStore((s) => s.activePersonaId);
   const personas = useStore((s) => s.personas);
+  const lorebooks = useStore((s) => s.lorebooks);
   const setActiveChatId = useStore((s) => s.setActiveChatId);
   const setActiveChatMeta = useStore((s) => s.setActiveChatMeta);
   const setMessages = useStore((s) => s.setMessages);
+  const updateLastMessage = useStore((s) => s.updateLastMessage);
   const closeOverlay = useStore((s) => s.closeOverlay);
 
   const [scenarioMode, setScenarioMode] = useState(character ? "default" : "custom");
   const [scenarioText, setScenarioText] = useState("");
   const [greetingMode, setGreetingMode] = useState("write"); // 'write' | 'auto'
+  const [selectedLorebookIds, setSelectedLorebookIds] = useState([]);
   const [starting, setStarting] = useState(false);
 
   const ready = !!activeConnectionId && !!activeModel;
+  const toggleLorebook = (id) =>
+    setSelectedLorebookIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const start = async () => {
     if (!ready) return;
@@ -63,6 +69,18 @@ export default function NewChatWizard({ character, onClose }) {
         scenario: chat.scenario?.text || null,
       });
       setMessages([]);
+      for (const lorebookId of selectedLorebookIds) {
+        api.attachLorebookToChat(lorebookId, chat.id).catch(() => {});
+      }
+
+      // Close right away — everything below this point only touches the
+      // global store, which the now-visible ChatWindow renders live, the
+      // same way any other streaming reply shows up. There's no reason to
+      // keep this modal open and blocking for however long generation
+      // takes; leaving it open was what let someone get impatient, close
+      // it mid-stream, and orphan this function while it kept mutating
+      // state behind an already-dismissed UI.
+      closeOverlay();
 
       if (character && scenarioMode === "default") {
         // Seed ALL of the card's greetings (firstMes + alternates) as
@@ -72,27 +90,33 @@ export default function NewChatWizard({ character, onClose }) {
         const personaName = personas.find((p) => p.id === activePersonaId)?.name;
         const macroCtx = { charName: character.name, personaName };
         const rawVariants = [character.firstMes, ...(character.alternateGreetings || [])].filter(Boolean);
-        const variants = rawVariants.map((v) => replaceMacros(v, macroCtx));
-        const greeting = variants[0] || `*${character.name} says nothing yet.*`;
-        const saved = await api.postMessage(chat.id, {
-          role: "assistant",
-          content: greeting,
-          characterId: character.id,
-          variants: variants.length > 1 ? variants : undefined,
-        });
-        setMessages([
-          {
-            id: saved.id,
+        if (rawVariants.length > 0) {
+          const variants = rawVariants.map((v) => replaceMacros(v, macroCtx));
+          const greeting = variants[0];
+          const saved = await api.postMessage(chat.id, {
             role: "assistant",
             content: greeting,
             characterId: character.id,
-            variantIndex: 0,
-            variantCount: variants.length || 1,
-          },
-        ]);
+            variants: variants.length > 1 ? variants : undefined,
+          });
+          setMessages([
+            {
+              id: saved.id,
+              role: "assistant",
+              content: greeting,
+              characterId: character.id,
+              variantIndex: 0,
+              variantCount: variants.length,
+            },
+          ]);
+        }
+        // else: character has no greeting defined at all — leave the chat
+        // completely blank rather than inserting a placeholder line.
       } else if (useCustomScenario && greetingMode === "auto") {
-        const greetingMsgId = crypto.randomUUID();
-        setMessages([{ id: greetingMsgId, role: "assistant", content: "", streaming: true }]);
+        const greetingMsgId = generateId();
+        setMessages([
+          { id: greetingMsgId, role: "assistant", content: "", streaming: true, characterId: character?.id },
+        ]);
         await new Promise((resolve) => {
           const commonArgs = {
             connectionId: activeConnectionId,
@@ -103,30 +127,14 @@ export default function NewChatWizard({ character, onClose }) {
           };
           const handlers = {
             onDelta: (delta) => {
-              setMessages((prev) => {
-                const msgs = [...prev];
-                msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content: msgs[msgs.length - 1].content + delta };
-                return msgs;
-              });
+              updateLastMessage((m) => ({ ...m, content: m.content + delta }));
             },
             onDone: (evt) => {
-              setMessages((prev) => {
-                const msgs = [...prev];
-                msgs[msgs.length - 1] = {
-                  ...msgs[msgs.length - 1],
-                  streaming: false,
-                  id: evt.messageId ?? msgs[msgs.length - 1].id,
-                };
-                return msgs;
-              });
+              updateLastMessage((m) => ({ ...m, streaming: false, id: evt.messageId ?? m.id }));
               resolve();
             },
             onError: (err) => {
-              setMessages((prev) => {
-                const msgs = [...prev];
-                msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], content: `⚠ ${err.message}`, streaming: false };
-                return msgs;
-              });
+              updateLastMessage((m) => ({ ...m, content: `⚠ ${err.message}`, streaming: false }));
               resolve();
             },
           };
@@ -156,8 +164,6 @@ export default function NewChatWizard({ character, onClose }) {
         });
       }
       // else: blank start (manual greeting) — nothing to seed, user types first.
-
-      closeOverlay();
     } catch (err) {
       alert(`Failed to start chat: ${err.message}`);
     } finally {
@@ -225,6 +231,32 @@ export default function NewChatWizard({ character, onClose }) {
             />
           </div>
         </>
+      )}
+
+      {lorebooks.length > 0 && (
+        <div className="mb-2">
+          <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted">
+            <BookOpen size={12} /> Lorebooks for this chat (optional)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {lorebooks.map((lb) => (
+              <button
+                key={lb.id}
+                onClick={() => toggleLorebook(lb.id)}
+                className={`rounded-full border px-3 py-1 text-xs transition ${
+                  selectedLorebookIds.includes(lb.id)
+                    ? "border-brass bg-brass/15 text-brass"
+                    : "border-hairline text-muted hover:text-ink"
+                }`}
+              >
+                {lb.name}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-hairline">
+            In addition to whatever lorebooks the character already has attached.
+          </p>
+        </div>
       )}
 
       <div className="mt-5 flex justify-end gap-2 border-t border-hairline pt-4">

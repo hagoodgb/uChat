@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 import { db } from "../db/db.js";
 import { toCardV2, fromCard, embedCardInPng, extractCardFromPng } from "../utils/pngCard.js";
 import { generatePlaceholderAvatar } from "../utils/placeholderAvatar.js";
+import { normalizeBook, toPublic as lorebookToPublic } from "./lorebooks.js";
 
 export const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -40,6 +41,36 @@ function saveCharacterRow(id, fields, avatarFilename) {
       `INSERT INTO characters (id, name, data_json, avatar_path) VALUES (?, ?, ?, ?)`
     ).run(id, fields.name, JSON.stringify(data), avatarFilename || null);
   }
+}
+
+// If an imported card came with an embedded lorebook (SillyTavern's
+// `character_book` field in the V2 spec), create it as a real lorebook and
+// attach it to the newly imported character automatically — mirroring how
+// SillyTavern itself offers to bring a card's lorebook along with it.
+function autoImportLorebook(characterId, characterName, characterBook) {
+  if (!characterBook || !Array.isArray(characterBook.entries) || characterBook.entries.length === 0) return null;
+  const book = normalizeBook(characterBook);
+  const lorebookId = nanoid();
+  const name = characterBook.name || `${characterName}'s Lorebook`;
+  db.prepare("INSERT INTO lorebooks (id, name, book_json) VALUES (?, ?, ?)").run(
+    lorebookId,
+    name,
+    JSON.stringify(book)
+  );
+  db.prepare("INSERT OR IGNORE INTO character_lorebooks (character_id, lorebook_id) VALUES (?, ?)").run(
+    characterId,
+    lorebookId
+  );
+  return { id: lorebookId, name };
+}
+
+function firstAttachedLorebook(characterId) {
+  const row = db
+    .prepare(
+      `SELECT l.* FROM lorebooks l JOIN character_lorebooks cl ON cl.lorebook_id = l.id WHERE cl.character_id = ? LIMIT 1`
+    )
+    .get(characterId);
+  return row ? lorebookToPublic(row) : null;
 }
 
 router.get("/", (req, res) => {
@@ -109,7 +140,8 @@ router.post("/import-png", upload.single("file"), (req, res) => {
     const filename = `${id}.png`;
     fs.writeFileSync(path.join(AVATAR_DIR, filename), req.file.buffer);
     saveCharacterRow(id, fields, filename);
-    res.status(201).json(toPublic(db.prepare("SELECT * FROM characters WHERE id = ?").get(id)));
+    const importedLorebook = autoImportLorebook(id, fields.name, fields.characterBook);
+    res.status(201).json({ ...toPublic(db.prepare("SELECT * FROM characters WHERE id = ?").get(id)), importedLorebook });
   } catch (err) {
     res.status(500).json({ error: `Failed to import card: ${err.message}` });
   }
@@ -144,7 +176,8 @@ router.post("/import-url", async (req, res) => {
       avatarBuffer || generatePlaceholderAvatar(fields.name)
     );
     saveCharacterRow(id, fields, filename);
-    res.status(201).json(toPublic(db.prepare("SELECT * FROM characters WHERE id = ?").get(id)));
+    const importedLorebook = autoImportLorebook(id, fields.name, fields.characterBook);
+    res.status(201).json({ ...toPublic(db.prepare("SELECT * FROM characters WHERE id = ?").get(id)), importedLorebook });
   } catch (err) {
     res.status(500).json({ error: `Failed to import from URL: ${err.message}` });
   }
@@ -154,7 +187,15 @@ router.post("/import-url", async (req, res) => {
 router.get("/:id/export-png", (req, res) => {
   const row = db.prepare("SELECT * FROM characters WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "not found" });
-  const fields = { id: row.id, ...JSON.parse(row.data_json), name: row.name };
+  const lorebook = firstAttachedLorebook(req.params.id);
+  const fields = {
+    id: row.id,
+    ...JSON.parse(row.data_json),
+    name: row.name,
+    characterBook: lorebook
+      ? { name: lorebook.name, description: lorebook.description, entries: lorebook.entries }
+      : undefined,
+  };
   const card = toCardV2(fields);
 
   const basePngPath = row.avatar_path
@@ -175,6 +216,14 @@ router.get("/:id/export-png", (req, res) => {
 router.get("/:id/export-json", (req, res) => {
   const row = db.prepare("SELECT * FROM characters WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "not found" });
-  const fields = { id: row.id, ...JSON.parse(row.data_json), name: row.name };
+  const lorebook = firstAttachedLorebook(req.params.id);
+  const fields = {
+    id: row.id,
+    ...JSON.parse(row.data_json),
+    name: row.name,
+    characterBook: lorebook
+      ? { name: lorebook.name, description: lorebook.description, entries: lorebook.entries }
+      : undefined,
+  };
   res.json(toCardV2(fields));
 });

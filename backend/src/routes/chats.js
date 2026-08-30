@@ -15,13 +15,27 @@ function toPublic(row) {
     settingsProfileId: row.settings_profile_id,
     scenario: row.scenario_json ? JSON.parse(row.scenario_json) : null,
     responseMode: row.response_mode,
+    // Collapsed to one line and capped — just enough to tell chats with the
+    // same character apart in the History list, not a full quote.
+    lastMessagePreview: row.last_message_content
+      ? row.last_message_content.replace(/\s+/g, " ").trim().slice(0, 100)
+      : null,
+    lastMessageRole: row.last_message_role || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
 router.get("/", (req, res) => {
-  const rows = db.prepare("SELECT * FROM chats ORDER BY updated_at DESC").all();
+  const rows = db
+    .prepare(
+      `SELECT c.*,
+         (SELECT content FROM messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_content,
+         (SELECT role FROM messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_role
+       FROM chats c
+       ORDER BY c.updated_at DESC`
+    )
+    .all();
   res.json(rows.map(toPublic));
 });
 
@@ -63,7 +77,7 @@ router.get("/:id", (req, res) => {
 router.put("/:id", (req, res) => {
   const existing = db.prepare("SELECT * FROM chats WHERE id = ?").get(req.params.id);
   if (!existing) return res.status(404).json({ error: "not found" });
-  const { title, modelMap, settingsProfileId, scenario, responseMode } = req.body;
+  const { title, modelMap, settingsProfileId, scenario, responseMode, characterIds, kind } = req.body;
   db.prepare(
     `UPDATE chats SET
        title = COALESCE(?, title),
@@ -71,6 +85,8 @@ router.put("/:id", (req, res) => {
        settings_profile_id = COALESCE(?, settings_profile_id),
        scenario_json = COALESCE(?, scenario_json),
        response_mode = COALESCE(?, response_mode),
+       character_ids_json = COALESCE(?, character_ids_json),
+       kind = COALESCE(?, kind),
        updated_at = datetime('now')
      WHERE id = ?`
   ).run(
@@ -79,6 +95,8 @@ router.put("/:id", (req, res) => {
     settingsProfileId ?? null,
     scenario ? JSON.stringify(scenario) : null,
     responseMode ?? null,
+    characterIds ? JSON.stringify(characterIds) : null,
+    kind ?? null,
     req.params.id
   );
   res.json(toPublic(db.prepare("SELECT * FROM chats WHERE id = ?").get(req.params.id)));
@@ -96,6 +114,7 @@ function toMessagePublic(m) {
     chatId: m.chat_id,
     role: m.role,
     characterId: m.character_id,
+    personaId: m.persona_id,
     content: m.content,
     variantIndex: m.active_variant_index || 0,
     variantCount: variants ? variants.length : 1,
@@ -110,7 +129,10 @@ router.get("/:id/messages", (req, res) => {
   res.json(rows.map(toMessagePublic));
 });
 
-// body: { role, content, characterId?, variants?, messageId? }
+// body: { role, content, characterId?, personaId?, variants?, messageId? }
+// `personaId`: which persona the user was playing as at send time — a
+// snapshot, not a live reference, so switching personas later never
+// rewrites how earlier messages are attributed.
 // `variants`: seed multiple alternates upfront (e.g. a character's card
 // greeting + its alternate greetings), all available to swipe through
 // immediately with no extra generation needed. `content` should be
@@ -119,19 +141,20 @@ router.get("/:id/messages", (req, res) => {
 // frontend can know a message's real id up front (used when streaming, so
 // Stop-mid-generation doesn't leave a message the UI can't act on yet).
 router.post("/:id/messages", (req, res) => {
-  const { role, content, characterId, variants, messageId } = req.body;
+  const { role, content, characterId, personaId, variants, messageId } = req.body;
   if (!role || !content) return res.status(400).json({ error: "role and content required" });
   const id = messageId || nanoid();
   const variantsJson = variants && variants.length > 1 ? JSON.stringify(variants) : null;
   db.prepare(
-    "INSERT INTO messages (id, chat_id, role, character_id, content, variants_json, active_variant_index) VALUES (?, ?, ?, ?, ?, ?, 0)"
-  ).run(id, req.params.id, role, characterId || null, content, variantsJson);
+    "INSERT INTO messages (id, chat_id, role, character_id, persona_id, content, variants_json, active_variant_index) VALUES (?, ?, ?, ?, ?, ?, ?, 0)"
+  ).run(id, req.params.id, role, characterId || null, personaId || null, content, variantsJson);
   db.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").run(req.params.id);
   res.status(201).json({
     id,
     chatId: req.params.id,
     role,
     characterId,
+    personaId,
     content,
     variantIndex: 0,
     variantCount: variants?.length || 1,

@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS character_lorebooks (
   PRIMARY KEY (character_id, lorebook_id)
 );
 
+CREATE TABLE IF NOT EXISTS chat_lorebooks (
+  chat_id TEXT NOT NULL,
+  lorebook_id TEXT NOT NULL,
+  PRIMARY KEY (chat_id, lorebook_id)
+);
+
 CREATE TABLE IF NOT EXISTS personas (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -69,6 +75,7 @@ CREATE TABLE IF NOT EXISTS messages (
   chat_id TEXT NOT NULL,
   role TEXT NOT NULL,                 -- 'user' | 'assistant' | 'system'
   character_id TEXT,                  -- which character spoke (group chats)
+  persona_id TEXT,                    -- which persona the user was playing as when THIS message was sent
   content TEXT NOT NULL,              -- always mirrors variants[active_variant_index]
   variants_json TEXT,                 -- array of alternate texts (swipes/greetings); NULL = just one variant (content itself)
   active_variant_index INTEGER NOT NULL DEFAULT 0,

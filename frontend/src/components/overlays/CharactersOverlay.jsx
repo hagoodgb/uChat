@@ -10,6 +10,7 @@ export default function CharactersOverlay() {
   const closeOverlay = useStore((s) => s.closeOverlay);
   const characters = useStore((s) => s.characters);
   const setCharacters = useStore((s) => s.setCharacters);
+  const setLorebooks = useStore((s) => s.setLorebooks);
 
   const [editingCharacter, setEditingCharacter] = useState(undefined); // undefined = closed, null = new, obj = edit
   const [wizardCharacter, setWizardCharacter] = useState(undefined); // undefined = closed, null = blank, obj = character
@@ -23,13 +24,23 @@ export default function CharactersOverlay() {
     refresh();
   }, []);
 
+  const notifyLorebookImport = (result) => {
+    if (result?.importedLorebook) {
+      api.listLorebooks().then(setLorebooks).catch(() => {});
+      alert(
+        `Imported "${result.name}" along with its lorebook "${result.importedLorebook.name}" — already attached, edit it from the Lorebooks menu.`
+      );
+    }
+  };
+
   const handlePngUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setBusy(true);
     try {
-      await api.importCharacterPng(file);
+      const result = await api.importCharacterPng(file);
       refresh();
+      notifyLorebookImport(result);
     } catch (err) {
       alert(`Import failed: ${err.message}`);
     } finally {
@@ -42,10 +53,11 @@ export default function CharactersOverlay() {
     if (!urlImportValue.trim()) return;
     setBusy(true);
     try {
-      await api.importCharacterUrl(urlImportValue.trim());
+      const result = await api.importCharacterUrl(urlImportValue.trim());
       setUrlImportValue("");
       setShowUrlImport(false);
       refresh();
+      notifyLorebookImport(result);
     } catch (err) {
       alert(`Import failed: ${err.message}`);
     } finally {

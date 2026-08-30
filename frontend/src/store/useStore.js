@@ -2,6 +2,13 @@ import { create } from "zustand";
 
 const PERSONA_STORAGE_KEY = "llm-chat-studio:activePersonaId";
 const SETTINGS_STORAGE_KEY = "llm-chat-studio:settingsValues";
+const PINNED_STORAGE_KEY = "llm-chat-studio:pinnedByChat";
+const CONTEXT_LIMITS_STORAGE_KEY = "llm-chat-studio:contextLimitsByModel";
+export const DEFAULT_PINNED_WIDTH = 340;
+// Used only when a provider doesn't expose a model's real context window
+// (OpenAI's and Anthropic's /models endpoints don't; OpenRouter's does) —
+// a reasonable, safely-conservative guess the person can freely raise.
+export const DEFAULT_CONTEXT_LIMIT = 8192;
 
 function loadPersistedSettings() {
   try {
@@ -20,6 +27,40 @@ function persistSettings(values) {
   }
 }
 
+function loadPersistedPinned() {
+  try {
+    const raw = localStorage.getItem(PINNED_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistPinned(pinnedByChat) {
+  try {
+    localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinnedByChat));
+  } catch {
+    // localStorage unavailable — pinned image layout just won't persist across reloads
+  }
+}
+
+function loadPersistedContextLimits() {
+  try {
+    const raw = localStorage.getItem(CONTEXT_LIMITS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistContextLimits(byModel) {
+  try {
+    localStorage.setItem(CONTEXT_LIMITS_STORAGE_KEY, JSON.stringify(byModel));
+  } catch {
+    // localStorage unavailable — remembered per-model limits just won't persist across reloads
+  }
+}
+
 export const useStore = create((set, get) => ({
   // ---- Overlay visibility ----
   activeOverlay: null, // 'connections' | 'settings' | 'characters' | 'group' | 'history' | 'personas' | null
@@ -32,10 +73,43 @@ export const useStore = create((set, get) => ({
   activeProtocol: null, // 'openai-compatible' | 'anthropic-native'
   availableModels: [],
   activeModel: null,
+  modelContextLengths: {}, // { [modelId]: number } — only populated for providers that expose it (e.g. OpenRouter)
   setConnections: (connections) => set({ connections }),
   setActiveConnection: (id, protocol) => set({ activeConnectionId: id, activeProtocol: protocol }),
   setAvailableModels: (models) => set({ availableModels: models }),
+  setModelContextLengths: (modelContextLengths) => set({ modelContextLengths: modelContextLengths || {} }),
   setActiveModel: (model) => set({ activeModel: model }),
+
+  // Remembered per model, keyed by model id — the FIRST time a model is
+  // used, this defaults to its real max context window (if the provider
+  // exposes one) or a generic fallback, and is saved immediately so it's
+  // "remembered" from that point on, same as it would in SillyTavern.
+  // Manually lowering it later just updates this same remembered value.
+  contextLimitsByModel: loadPersistedContextLimits(),
+  // Resolves (and, if this model's never been seen before, seeds) the
+  // context limit for `model`, applying it to settingsValues.contextLimit.
+  applyContextLimitForModel: (model) =>
+    set((state) => {
+      if (!model) return {};
+      const existing = state.contextLimitsByModel[model];
+      const value = existing ?? state.modelContextLengths[model] ?? DEFAULT_CONTEXT_LIMIT;
+      const contextLimitsByModel = { ...state.contextLimitsByModel, [model]: value };
+      persistContextLimits(contextLimitsByModel);
+      const settingsValues = { ...state.settingsValues, contextLimit: value };
+      persistSettings(settingsValues);
+      return { contextLimitsByModel, settingsValues };
+    }),
+  // Called when the person manually moves the Context Limit slider — updates
+  // both the live value and this model's remembered value together.
+  setContextLimitForModel: (model, value) =>
+    set((state) => {
+      const settingsValues = { ...state.settingsValues, contextLimit: value };
+      persistSettings(settingsValues);
+      if (!model) return { settingsValues };
+      const contextLimitsByModel = { ...state.contextLimitsByModel, [model]: value };
+      persistContextLimits(contextLimitsByModel);
+      return { settingsValues, contextLimitsByModel };
+    }),
 
   // ---- Settings ----
   settingsSchema: [], // filtered to active protocol
@@ -71,14 +145,20 @@ export const useStore = create((set, get) => ({
       const supportedKeys = new Set(state.settingsSchema.map((s) => s.key));
       const merged = { ...state.settingsValues };
       for (const [k, v] of Object.entries(profile.settings)) {
-        // Sliders only apply if the current provider supports them; the two
-        // global prompt fields always apply regardless of provider.
-        if (supportedKeys.has(k) || k === "systemPrompt" || k === "postHistoryInstructions") {
+        // Sliders only apply if the current provider supports them; the
+        // global prompt fields and context limit always apply regardless
+        // of provider, since none of them are provider request params.
+        if (supportedKeys.has(k) || k === "systemPrompt" || k === "postHistoryInstructions" || k === "contextLimit") {
           merged[k] = v;
         }
       }
       persistSettings(merged);
-      return { settingsValues: merged };
+      let contextLimitsByModel = state.contextLimitsByModel;
+      if (state.activeModel && typeof merged.contextLimit === "number") {
+        contextLimitsByModel = { ...state.contextLimitsByModel, [state.activeModel]: merged.contextLimit };
+        persistContextLimits(contextLimitsByModel);
+      }
+      return { settingsValues: merged, contextLimitsByModel };
     }),
   setSettingsProfiles: (settingsProfiles) => set({ settingsProfiles }),
 
@@ -142,16 +222,45 @@ export const useStore = create((set, get) => ({
   updateActiveChatMeta: (patch) =>
     set((state) => ({ activeChatMeta: state.activeChatMeta ? { ...state.activeChatMeta, ...patch } : patch })),
 
-  // ---- Pinned large avatar images (left/right side rails) ----
-  // Ordered by click time; even indices render in the left rail, odd in the
-  // right, so clicks fill left-right-left-right... up to 5 total (4 group
-  // members + 1 persona).
-  pinnedAvatars: [], // [{ key, name, avatarUrl }]
-  togglePinnedAvatar: (item) =>
+  // ---- Pinned large avatar images (left/right freeform panels) ----
+  // Keyed by chatId so switching chats shows/hides the right set — pinning
+  // an image in one chat has no effect on any other. Persisted to
+  // localStorage so position/size survive a reload. Ordered by click time;
+  // side is assigned once at pin-time (left, right, left, right...) and
+  // stays fixed afterward, even if an earlier pin is later removed.
+  pinnedByChat: loadPersistedPinned(),
+  togglePinnedAvatar: (chatId, item) =>
     set((state) => {
-      const exists = state.pinnedAvatars.some((p) => p.key === item.key);
-      if (exists) return { pinnedAvatars: state.pinnedAvatars.filter((p) => p.key !== item.key) };
-      if (state.pinnedAvatars.length >= 5) return {}; // at capacity — ignore until one is unpinned
-      return { pinnedAvatars: [...state.pinnedAvatars, item] };
+      if (!chatId) return {};
+      const current = state.pinnedByChat[chatId] || [];
+      const exists = current.some((p) => p.key === item.key);
+      let next;
+      if (exists) {
+        next = current.filter((p) => p.key !== item.key);
+      } else {
+        if (current.length >= 5) return {}; // at capacity — ignore until one is unpinned
+        const side = current.length % 2 === 0 ? "left" : "right";
+        // Cascade each new pin on the same side a little further down/in,
+        // so freshly-pinned images don't land exactly on top of an earlier
+        // one before the person has a chance to move it.
+        const sameSideCount = current.filter((p) => p.side === side).length;
+        const cascade = sameSideCount * 28;
+        next = [
+          ...current,
+          { ...item, side, x: 24 + cascade, y: 24 + cascade, width: DEFAULT_PINNED_WIDTH, height: null },
+        ];
+      }
+      const pinnedByChat = { ...state.pinnedByChat, [chatId]: next };
+      persistPinned(pinnedByChat);
+      return { pinnedByChat };
+    }),
+  updatePinnedAvatar: (chatId, key, patch) =>
+    set((state) => {
+      if (!chatId) return {};
+      const current = state.pinnedByChat[chatId] || [];
+      const next = current.map((p) => (p.key === key ? { ...p, ...patch } : p));
+      const pinnedByChat = { ...state.pinnedByChat, [chatId]: next };
+      persistPinned(pinnedByChat);
+      return { pinnedByChat };
     }),
 }));

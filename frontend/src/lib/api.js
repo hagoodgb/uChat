@@ -82,11 +82,18 @@ export const api = {
   deleteLorebook: (id) => req(`/lorebooks/${id}`, { method: "DELETE" }),
   importLorebookJson: (name, book) =>
     req("/lorebooks/import-json", { method: "POST", body: JSON.stringify({ name, book }) }),
+  importLorebookUrl: (url, name) =>
+    req("/lorebooks/import-url", { method: "POST", body: JSON.stringify({ url, name }) }),
   attachLorebook: (lorebookId, characterId) =>
     req(`/lorebooks/${lorebookId}/attach/${characterId}`, { method: "POST" }),
   detachLorebook: (lorebookId, characterId) =>
     req(`/lorebooks/${lorebookId}/attach/${characterId}`, { method: "DELETE" }),
   lorebooksForCharacter: (characterId) => req(`/lorebooks/for-character/${characterId}`),
+  attachLorebookToChat: (lorebookId, chatId) =>
+    req(`/lorebooks/${lorebookId}/attach-chat/${chatId}`, { method: "POST" }),
+  detachLorebookFromChat: (lorebookId, chatId) =>
+    req(`/lorebooks/${lorebookId}/attach-chat/${chatId}`, { method: "DELETE" }),
+  lorebooksForChat: (chatId) => req(`/lorebooks/for-chat/${chatId}`),
 
   // Personas
   listPersonas: () => req("/personas"),

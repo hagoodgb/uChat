@@ -1,4 +1,4 @@
-import { Plug, SlidersHorizontal, Users, UsersRound, History, Sparkles, UserRound } from "lucide-react";
+import { Plug, SlidersHorizontal, Users, UsersRound, History, Sparkles, UserRound, BookOpen } from "lucide-react";
 import { useStore } from "../store/useStore.js";
 
 const ICONS = [
@@ -6,6 +6,7 @@ const ICONS = [
   { key: "settings", icon: SlidersHorizontal, label: "Settings" },
   { key: "characters", icon: Users, label: "Characters" },
   { key: "personas", icon: UserRound, label: "Personas" },
+  { key: "lorebooks", icon: BookOpen, label: "Lorebooks" },
   { key: "group", icon: UsersRound, label: "Group Chat" },
   { key: "history", icon: History, label: "Chat History" },
 ];
